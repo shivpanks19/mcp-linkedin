@@ -493,6 +493,7 @@ Same hosting shape as Hexa's Google Ads Python MCP: streamable HTTP at `/mcp`, U
 ```bash
 npm install && npm run build
 npm run start:http   # http://127.0.0.1:8000/mcp
+# Render: build `npm install && npm run build`, start `node dist/http.js`, NODE_VERSION=20
 ```
 
 Cursor remote MCP:

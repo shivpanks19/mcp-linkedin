@@ -29,8 +29,9 @@ LinkedIn has no service-account flow. Tokens live in env, not on disk.
 | **Region** | Oregon (or nearest) |
 | **Branch** | `main` |
 | **Runtime** | Node |
-| **Build Command** | `npm ci && npm run build` |
-| **Start Command** | `npm run start:http` |
+| **Node version** | `20` (set env `NODE_VERSION=20` or use `.node-version`) |
+| **Build Command** | `npm install && npm run build` |
+| **Start Command** | `node dist/http.js` |
 | **Health Check Path** | `/health` |
 
 Do **not** use a static site or the default `node index.js` (that is stdio).

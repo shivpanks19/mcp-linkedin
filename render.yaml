@@ -9,8 +9,8 @@ services:
     plan: starter
     region: oregon
     branch: main
-    buildCommand: npm ci && npm run build
-    startCommand: npm run start:http
+    buildCommand: npm install && npm run build
+    startCommand: node dist/http.js
     healthCheckPath: /health
     envVars:
       - key: NODE_VERSION

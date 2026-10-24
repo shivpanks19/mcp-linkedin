@@ -328,6 +328,17 @@ function isMainModule(): boolean {
 }
 
 if (isMainModule()) {
-  const server = new LinkedInAdsMCPServer();
-  server.run().catch(console.error);
+  void (async () => {
+    // Render sets PORT and often starts `node dist/index.js`. Bind HTTP instead of stdio.
+    if (process.env.PORT) {
+      const { startHttpServer } = await import('./http.js');
+      await startHttpServer();
+      return;
+    }
+    const server = new LinkedInAdsMCPServer();
+    await server.run();
+  })().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
 }

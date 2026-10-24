@@ -180,7 +180,7 @@ function buildApp() {
   return app;
 }
 
-async function main(): Promise<void> {
+export async function startHttpServer(): Promise<void> {
   const { host, port } = listenHostPort();
   const app = buildApp();
   const authEnabled = Boolean(configuredToken());
@@ -215,7 +215,7 @@ function isMainModule(): boolean {
 }
 
 if (isMainModule()) {
-  main().catch((error) => {
+  startHttpServer().catch((error) => {
     console.error('Fatal error starting HTTP MCP server', error);
     process.exit(1);
   });
