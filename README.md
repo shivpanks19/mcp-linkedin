@@ -486,6 +486,31 @@ This typically means the campaign ID from analytics doesn't match any campaign i
 
 ---
 
+## Host on Render (HTTP MCP)
+
+Same hosting shape as Hexa's Google Ads Python MCP: streamable HTTP at `/mcp`, URL token auth, `/health`.
+
+```bash
+npm install && npm run build
+npm run start:http   # http://127.0.0.1:8000/mcp
+```
+
+Cursor remote MCP:
+
+```json
+{
+  "mcpServers": {
+    "linkedin-ads": {
+      "url": "https://YOUR-SERVICE.onrender.com/mcp?token=YOUR_MCP_URL_AUTH_TOKEN"
+    }
+  }
+}
+```
+
+Full steps (env vars, token JSON, blueprint): **[docs/render-deploy.md](docs/render-deploy.md)**. Local stdio (`npm start`) is unchanged.
+
+---
+
 ## Tech Stack
 
 - **[Model Context Protocol (MCP)](https://modelcontextprotocol.io)** - The protocol that enables Claude to interact with external tools

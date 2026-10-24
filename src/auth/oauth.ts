@@ -7,12 +7,17 @@ import { LinkedInTokens } from '../lib/types.js';
 const LINKEDIN_AUTH_URL = 'https://www.linkedin.com/oauth/v2/authorization';
 const LINKEDIN_TOKEN_URL = 'https://www.linkedin.com/oauth/v2/accessToken';
 
-// Scopes required for LinkedIn Ads API
-// - rw_ads: Read-write access to ads (manage advertising accounts)
-// - r_ads_reporting: Read ads analytics/reporting
-// - r_organization_social: Read organization posts (to get creative content/images)
-// - w_organization_social: Write organization content (upload images owned by org for ads)
-const SCOPES = ['rw_ads', 'r_ads_reporting', 'r_organization_social', 'w_organization_social'];
+// Scopes required for LinkedIn Ads API + organic company-page posts (Posts API)
+// - rw_ads / r_ads_reporting: ads CRUD and reporting
+// - r_organization_social / w_organization_social: read/write organic org posts & images
+// - r_organization_admin: list organizations the member can administer (organizationAcls)
+const SCOPES = [
+  'rw_ads',
+  'r_ads_reporting',
+  'r_organization_social',
+  'w_organization_social',
+  'r_organization_admin',
+];
 
 interface OAuthConfig {
   clientId: string;

@@ -443,6 +443,182 @@ export class LinkedInApiClient {
     }
   }
 
+  private toOrganizationUrn(organizationId: string): string {
+    if (organizationId.startsWith('urn:li:organization:')) {
+      return organizationId;
+    }
+    const numeric = organizationId.replace(/\D/g, '');
+    if (!numeric) {
+      throw new Error('organizationId must be a numeric ID or urn:li:organization:{id}');
+    }
+    return `urn:li:organization:${numeric}`;
+  }
+
+  /**
+   * Organizations the authenticated member can administer (for organic posting).
+   */
+  async listManagedOrganizations(options: {
+    roles?: string[];
+    state?: string;
+  } = {}): Promise<
+    Array<{
+      organizationUrn: string;
+      organizationId: string;
+      role: string;
+      state: string;
+      localizedName?: string;
+    }>
+  > {
+    const roles = options.roles ?? [
+      'ADMINISTRATOR',
+      'CONTENT_ADMIN',
+      'DIRECT_SPONSORED_CONTENT_POSTER',
+      'RECRUITING_POSTER',
+    ];
+    const state = options.state ?? 'APPROVED';
+
+    const params: Record<string, string | number> = {
+      q: 'roleAssignee',
+      state,
+      count: 100,
+      start: 0,
+    };
+
+    const elements: Array<Record<string, unknown>> = [];
+    let start = 0;
+
+    for (;;) {
+      params.start = start;
+      const response = await this.request<{
+        elements?: Array<Record<string, unknown>>;
+        paging?: { links?: Array<{ rel?: string; href?: string }> };
+      }>('/rest/organizationAcls', { params });
+
+      const batch = response.elements ?? [];
+      elements.push(...batch);
+
+      const next = response.paging?.links?.find(l => l.rel === 'next');
+      if (!next?.href || batch.length === 0) {
+        break;
+      }
+      start += batch.length;
+      if (start > 500) {
+        break;
+      }
+    }
+
+    const filtered = elements.filter(el => {
+      const role = String(el.role ?? '');
+      return roles.includes(role);
+    });
+
+    const orgIds = new Set<string>();
+    const rows: Array<{
+      organizationUrn: string;
+      organizationId: string;
+      role: string;
+      state: string;
+    }> = [];
+
+    for (const el of filtered) {
+      const orgField =
+        (el.organization as string | undefined) ||
+        (el.organizationTarget as string | undefined);
+      if (!orgField) continue;
+      const organizationUrn = orgField.startsWith('urn:')
+        ? orgField
+        : `urn:li:organization:${orgField}`;
+      const organizationId = organizationUrn.split(':').pop() ?? '';
+      if (!organizationId || orgIds.has(organizationId)) continue;
+      orgIds.add(organizationId);
+      rows.push({
+        organizationUrn,
+        organizationId,
+        role: String(el.role ?? ''),
+        state: String(el.state ?? ''),
+      });
+    }
+
+    const withNames = await Promise.all(
+      rows.map(async row => {
+        const org = await this.getOrganization(row.organizationId);
+        return {
+          ...row,
+          localizedName: org?.localizedName as string | undefined,
+          vanityName: org?.vanityName as string | undefined,
+        };
+      })
+    );
+
+    return withNames;
+  }
+
+  async getOrganization(organizationId: string): Promise<Record<string, unknown> | null> {
+    try {
+      const id = organizationId.replace(/^urn:li:organization:/, '');
+      return await this.request<Record<string, unknown>>(`/rest/organizations/${id}`);
+    } catch (error) {
+      console.error(`Failed to fetch organization ${organizationId}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Publishes an organic (non-sponsored) post to a company page via POST /rest/posts.
+   */
+  async createOrganicOrganizationPost(data: {
+    organizationId: string;
+    commentary: string;
+    visibility?: 'PUBLIC';
+    article?: { source: string; title: string; description?: string; thumbnail?: string };
+    imageUrn?: string;
+    imageTitle?: string;
+  }): Promise<{ postId: string }> {
+    const author = this.toOrganizationUrn(data.organizationId);
+
+    const body: Record<string, unknown> = {
+      author,
+      commentary: data.commentary,
+      visibility: data.visibility ?? 'PUBLIC',
+      distribution: {
+        feedDistribution: 'MAIN_FEED',
+        targetEntities: [],
+        thirdPartyDistributionChannels: [],
+      },
+      lifecycleState: 'PUBLISHED',
+      isReshareDisabledByAuthor: false,
+    };
+
+    if (data.article) {
+      body.content = {
+        article: {
+          source: data.article.source,
+          title: data.article.title,
+          ...(data.article.description ? { description: data.article.description } : {}),
+          ...(data.article.thumbnail ? { thumbnail: data.article.thumbnail } : {}),
+        },
+      };
+    } else if (data.imageUrn) {
+      body.content = {
+        media: {
+          id: data.imageUrn,
+          ...(data.imageTitle ? { title: data.imageTitle } : {}),
+        },
+      };
+    }
+
+    const result = await this.request<{ id: string }>('/rest/posts', {
+      method: 'POST',
+      body,
+    });
+
+    if (!result?.id) {
+      throw new Error('Post created but no post ID returned in x-restli-id header');
+    }
+
+    return { postId: result.id };
+  }
+
   /**
    * Fetches an image by URN to get the download URL.
    */

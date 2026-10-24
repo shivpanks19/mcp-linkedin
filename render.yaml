@@ -1,0 +1,29 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Deploy: connect this repo in Render Dashboard → New → Blueprint (or Web Service with these settings).
+# Same shape as mcp-google-ads: streamable HTTP, /health, MCP_URL_AUTH_TOKEN.
+
+services:
+  - type: web
+    name: mcp-linkedin
+    runtime: node
+    plan: starter
+    region: oregon
+    branch: main
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start:http
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: MCP_URL_AUTH_TOKEN
+        sync: false
+      - key: LINKEDIN_CLIENT_ID
+        sync: false
+      - key: LINKEDIN_CLIENT_SECRET
+        sync: false
+      - key: LINKEDIN_TOKENS_JSON
+        sync: false
+      - key: LINKEDIN_REDIRECT_URI
+        value: http://localhost:3000/callback
+      - key: TOKEN_STORAGE_PATH
+        value: /tmp/linkedin-ads-mcp-tokens.json

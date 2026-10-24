@@ -5,14 +5,20 @@ import { LinkedInTokens } from '../lib/types.js';
 
 const DEFAULT_TOKEN_PATH = path.join(os.homedir(), '.linkedin-ads-mcp', 'tokens.json');
 
+export type TokenSource = 'env' | 'file' | 'none';
+
 export class TokenStore {
   private tokenPath: string;
   private tokens: LinkedInTokens | null = null;
+  private source: TokenSource = 'none';
 
   constructor(tokenPath?: string) {
     this.tokenPath = tokenPath || process.env.TOKEN_STORAGE_PATH || DEFAULT_TOKEN_PATH;
-    this.ensureDirectory();
     this.loadTokens();
+  }
+
+  getTokenSource(): TokenSource {
+    return this.source;
   }
 
   private ensureDirectory(): void {
@@ -23,22 +29,50 @@ export class TokenStore {
   }
 
   private loadTokens(): void {
+    const envRaw = (process.env.LINKEDIN_TOKENS_JSON || '').trim();
+    if (envRaw) {
+      try {
+        const parsed = JSON.parse(envRaw) as LinkedInTokens;
+        if (!parsed?.access_token) {
+          throw new Error('LINKEDIN_TOKENS_JSON must include access_token');
+        }
+        this.tokens = parsed;
+        this.source = 'env';
+        return;
+      } catch (error) {
+        throw new Error(
+          `Failed to parse LINKEDIN_TOKENS_JSON: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+
     try {
       if (fs.existsSync(this.tokenPath)) {
         const data = fs.readFileSync(this.tokenPath, 'utf-8');
         this.tokens = JSON.parse(data);
+        this.source = this.tokens ? 'file' : 'none';
       }
     } catch (error) {
       console.error('Failed to load tokens:', error);
       this.tokens = null;
+      this.source = 'none';
     }
   }
 
   async saveTokens(tokens: LinkedInTokens): Promise<void> {
     this.tokens = tokens;
-    fs.writeFileSync(this.tokenPath, JSON.stringify(tokens, null, 2), {
-      mode: 0o600,
-    });
+    if (this.source !== 'env') {
+      this.source = 'file';
+    }
+    try {
+      this.ensureDirectory();
+      fs.writeFileSync(this.tokenPath, JSON.stringify(tokens, null, 2), {
+        mode: 0o600,
+      });
+    } catch (error) {
+      // Render's filesystem may be read-only except /tmp; keep tokens in memory.
+      console.error('Failed to persist tokens to disk (in-memory refresh still applies):', error);
+    }
   }
 
   async getTokens(): Promise<LinkedInTokens | null> {

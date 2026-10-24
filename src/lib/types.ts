@@ -455,3 +455,29 @@ export interface UploadImageInput {
   accountId?: string;
   assetName?: string;
 }
+
+export interface ListManagedOrganizationsInput {
+  /** Only return orgs where the member has one of these page roles (default: post-capable roles). */
+  roles?: Array<
+    | 'ADMINISTRATOR'
+    | 'CONTENT_ADMIN'
+    | 'DIRECT_SPONSORED_CONTENT_POSTER'
+    | 'RECRUITING_POSTER'
+  >;
+}
+
+export interface PublishOrganizationPostInput {
+  organizationId: string;
+  commentary: string;
+  /** Must be true — publishes live to the company page main feed. */
+  confirmPublish: boolean;
+  visibility?: 'PUBLIC';
+  /** Optional link article card (requires title; thumbnail via separate image upload). */
+  articleUrl?: string;
+  articleTitle?: string;
+  articleDescription?: string;
+  /** urn:li:image:… from upload_image, or pass imageFilePath to upload then attach. */
+  imageUrn?: string;
+  imageFilePath?: string;
+  imageTitle?: string;
+}

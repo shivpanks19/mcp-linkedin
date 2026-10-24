@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import 'dotenv/config';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -73,9 +75,18 @@ import {
   uploadImageTool,
   handleUploadImage,
 } from './tools/campaign-management.js';
+import {
+  listManagedOrganizationsTool,
+  publishOrganizationPostTool,
+  handleListManagedOrganizations,
+  handlePublishOrganizationPost,
+} from './tools/organic-posts.js';
+
+export const SERVER_NAME = 'linkedin-ads-mcp';
+export const SERVER_VERSION = '1.2.0';
 
 // All available tools
-const TOOLS: Tool[] = [
+export const TOOLS: Tool[] = [
   // Account Management
   listAdAccountsTool,
   getAccountDetailsTool,
@@ -107,9 +118,12 @@ const TOOLS: Tool[] = [
   createInlineAdTool,
   listCampaignsTool,
   uploadImageTool,
+  // Organic company page posts (Posts API)
+  listManagedOrganizationsTool,
+  publishOrganizationPostTool,
 ];
 
-class LinkedInAdsMCPServer {
+export class LinkedInAdsMCPServer {
   private server: Server;
   private apiClient: LinkedInApiClient;
   private tokenStore: TokenStore;
@@ -117,8 +131,8 @@ class LinkedInAdsMCPServer {
   constructor() {
     this.server = new Server(
       {
-        name: 'linkedin-ads-mcp',
-        version: '1.0.0',
+        name: SERVER_NAME,
+        version: SERVER_VERSION,
       },
       {
         capabilities: {
@@ -131,6 +145,14 @@ class LinkedInAdsMCPServer {
     this.apiClient = new LinkedInApiClient(this.tokenStore);
 
     this.setupHandlers();
+  }
+
+  get mcpServer(): Server {
+    return this.server;
+  }
+
+  getTokenStore(): TokenStore {
+    return this.tokenStore;
   }
 
   private setupHandlers(): void {
@@ -251,6 +273,13 @@ class LinkedInAdsMCPServer {
             result = await handleUploadImage(this.apiClient, args);
             break;
 
+          case 'list_managed_organizations':
+            result = await handleListManagedOrganizations(this.apiClient, args);
+            break;
+          case 'publish_organization_post':
+            result = await handlePublishOrganizationPost(this.apiClient, args);
+            break;
+
           default:
             return {
               content: [
@@ -293,5 +322,12 @@ class LinkedInAdsMCPServer {
   }
 }
 
-const server = new LinkedInAdsMCPServer();
-server.run().catch(console.error);
+function isMainModule(): boolean {
+  const argvPath = process.argv[1] && path.resolve(process.argv[1]);
+  return Boolean(argvPath && fileURLToPath(import.meta.url) === argvPath);
+}
+
+if (isMainModule()) {
+  const server = new LinkedInAdsMCPServer();
+  server.run().catch(console.error);
+}
