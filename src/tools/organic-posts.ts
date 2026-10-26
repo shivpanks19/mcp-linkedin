@@ -1,9 +1,24 @@
+import { fileURLToPath } from 'node:url';
 import { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { LinkedInApiClient } from '../lib/linkedin-api.js';
 import {
   ListManagedOrganizationsInput,
   PublishOrganizationPostInput,
 } from '../lib/types.js';
+
+const CTA_LABELS = [
+  'APPLY',
+  'DOWNLOAD',
+  'VIEW_QUOTE',
+  'LEARN_MORE',
+  'SIGN_UP',
+  'SUBSCRIBE',
+  'REGISTER',
+  'JOIN',
+  'ATTEND',
+  'REQUEST_DEMO',
+  'SEE_MORE',
+] as const;
 
 export const listManagedOrganizationsTool: Tool = {
   name: 'list_managed_organizations',
@@ -33,7 +48,7 @@ export const listManagedOrganizationsTool: Tool = {
 export const publishOrganizationPostTool: Tool = {
   name: 'publish_organization_post',
   description:
-    'Publishes an organic (free) post to a LinkedIn company page main feed via the Posts API. Not an ad — does not use Campaign Manager. Requires w_organization_social and a post-capable page role (ADMINISTRATOR, CONTENT_ADMIN, etc.). Set confirmPublish to true to go live.',
+    'Publishes an organic (free) company-page post to LinkedIn MAIN_FEED. The calling LLM agent must pass the full post commentary (textual content + CTA copy) and, when posting a visual, imageUrl (HTTPS URL of the image). The server downloads that image, uploads it to LinkedIn, and attaches it. Pass ctaUrl for the destination link (clickable image landing page). Not an ad. Requires w_organization_social and a post-capable page role. Set confirmPublish to true to go live.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -44,7 +59,8 @@ export const publishOrganizationPostTool: Tool = {
       },
       commentary: {
         type: 'string',
-        description: 'Post text (commentary). LinkedIn supports lightweight markup; keep within typical feed length.',
+        description:
+          'Full social post text from the calling agent: hook, body, and CTA copy. Links in this text are posted as-is.',
       },
       confirmPublish: {
         type: 'boolean',
@@ -55,30 +71,46 @@ export const publishOrganizationPostTool: Tool = {
         enum: ['PUBLIC'],
         description: 'Default PUBLIC for company pages.',
       },
-      articleUrl: {
+      imageUrl: {
         type: 'string',
-        description: 'Optional URL for a link/article card attachment.',
-      },
-      articleTitle: {
-        type: 'string',
-        description: 'Required when articleUrl is set.',
-      },
-      articleDescription: {
-        type: 'string',
-        description: 'Optional subtitle for the article card.',
-      },
-      imageUrn: {
-        type: 'string',
-        description: 'Optional urn:li:image:… from upload_image.',
+        description:
+          'Preferred. Public HTTPS URL of the image supplied by the calling LLM agent. The server downloads JPEG/PNG/GIF, uploads to the organization, and attaches it to the post. file:// URLs are treated as local paths.',
       },
       imageFilePath: {
         type: 'string',
         description:
-          'Optional absolute path to an image file; uploads to the organization then attaches to the post.',
+          'Optional absolute path to a local image if no imageUrl is available. Do not pass both imageUrl and imageFilePath.',
+      },
+      imageUrn: {
+        type: 'string',
+        description: 'Optional urn:li:image:… from a prior upload_image call.',
       },
       imageTitle: {
         type: 'string',
         description: 'Optional title for image posts.',
+      },
+      ctaUrl: {
+        type: 'string',
+        description:
+          'CTA / landing-page URL from the calling agent. With an image this becomes LinkedIn contentLandingPage (clickable image). Without an image it is used as the article card URL when articleTitle is set.',
+      },
+      ctaLabel: {
+        type: 'string',
+        enum: [...CTA_LABELS],
+        description: 'LinkedIn CTA label used with ctaUrl. Default LEARN_MORE.',
+      },
+      articleUrl: {
+        type: 'string',
+        description:
+          'Optional URL for a link/article card when no image is attached. Ignored as a card if imageUrl/imageFilePath/imageUrn is set (use ctaUrl instead).',
+      },
+      articleTitle: {
+        type: 'string',
+        description: 'Required when posting an article card (no image) with articleUrl or ctaUrl.',
+      },
+      articleDescription: {
+        type: 'string',
+        description: 'Optional subtitle for the article card.',
       },
     },
     required: ['organizationId', 'commentary', 'confirmPublish'],
@@ -102,6 +134,28 @@ export async function handleListManagedOrganizations(
   };
 }
 
+function resolveImageSource(input: PublishOrganizationPostInput): {
+  imageUrn?: string;
+  filePath?: string;
+  imageUrl?: string;
+} {
+  let imageUrl = input.imageUrl?.trim();
+  let filePath = input.imageFilePath?.trim();
+  const imageUrn = input.imageUrn?.trim();
+
+  if (imageUrl?.startsWith('file://')) {
+    filePath = fileURLToPath(imageUrl);
+    imageUrl = undefined;
+  }
+
+  const sources = [imageUrn, filePath, imageUrl].filter(Boolean);
+  if (sources.length > 1) {
+    throw new Error('Provide only one of imageUrn, imageFilePath, or imageUrl');
+  }
+
+  return { imageUrn, filePath, imageUrl };
+}
+
 export async function handlePublishOrganizationPost(
   client: LinkedInApiClient,
   args: unknown
@@ -116,36 +170,53 @@ export async function handlePublishOrganizationPost(
     );
   }
 
-  if (input.articleUrl && !input.articleTitle) {
-    throw new Error('articleTitle is required when articleUrl is set');
+  const { imageUrn: existingImageUrn, filePath, imageUrl } = resolveImageSource(input);
+  const landingPageUrl = (input.ctaUrl || input.articleUrl || '').trim() || undefined;
+  const hasImageInput = Boolean(existingImageUrn || filePath || imageUrl);
+  const articleSource = !hasImageInput ? landingPageUrl : undefined;
+
+  if (articleSource && !input.articleTitle) {
+    throw new Error('articleTitle is required when posting a link card without an image');
   }
 
-  if (input.imageUrn && input.imageFilePath) {
-    throw new Error('Provide only one of imageUrn or imageFilePath');
-  }
+  let imageUrn = existingImageUrn;
+  let imageSource: 'urn' | 'file' | 'url' | 'buffer' | undefined = existingImageUrn
+    ? 'urn'
+    : undefined;
 
-  let imageUrn = input.imageUrn;
-  if (input.imageFilePath) {
+  if (filePath) {
     const uploaded = await client.uploadImage({
       owner: input.organizationId,
-      filePath: input.imageFilePath,
+      filePath,
     });
     imageUrn = uploaded.imageUrn;
+    imageSource = uploaded.source;
+  } else if (imageUrl) {
+    const uploaded = await client.uploadImage({
+      owner: input.organizationId,
+      imageUrl,
+    });
+    imageUrn = uploaded.imageUrn;
+    imageSource = uploaded.source;
   }
 
   const result = await client.createOrganicOrganizationPost({
     organizationId: input.organizationId,
     commentary: input.commentary,
     visibility: input.visibility ?? 'PUBLIC',
-    article: input.articleUrl
-      ? {
-          source: input.articleUrl,
-          title: input.articleTitle!,
-          description: input.articleDescription,
-        }
-      : undefined,
+    article:
+      !imageUrn && articleSource && input.articleTitle
+        ? {
+            source: articleSource,
+            title: input.articleTitle,
+            description: input.articleDescription,
+          }
+        : undefined,
     imageUrn,
-    imageTitle: input.imageTitle,
+    imageTitle: input.imageTitle || (imageUrn ? input.articleTitle : undefined),
+    contentLandingPage: imageUrn ? landingPageUrl : undefined,
+    contentCallToActionLabel:
+      imageUrn && landingPageUrl ? input.ctaLabel || 'LEARN_MORE' : undefined,
   });
 
   return {
@@ -153,5 +224,7 @@ export async function handlePublishOrganizationPost(
     postId: result.postId,
     message: 'Organic company page post published to MAIN_FEED.',
     imageUrn: imageUrn ?? undefined,
+    imageSource,
+    ctaUrl: landingPageUrl,
   };
 }

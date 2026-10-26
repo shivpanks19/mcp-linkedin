@@ -83,7 +83,7 @@ import {
 } from './tools/organic-posts.js';
 
 export const SERVER_NAME = 'linkedin-ads-mcp';
-export const SERVER_VERSION = '1.2.0';
+export const SERVER_VERSION = '1.3.0';
 
 // All available tools
 export const TOOLS: Tool[] = [

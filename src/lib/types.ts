@@ -451,7 +451,10 @@ export interface ListCampaignsInput {
 
 export interface UploadImageInput {
   organizationId: string;
-  filePath: string;
+  /** Absolute local path. Provide exactly one of filePath or imageUrl. */
+  filePath?: string;
+  /** Public HTTPS URL the calling agent supplies. Server downloads, then uploads to LinkedIn. */
+  imageUrl?: string;
   accountId?: string;
   assetName?: string;
 }
@@ -472,12 +475,33 @@ export interface PublishOrganizationPostInput {
   /** Must be true — publishes live to the company page main feed. */
   confirmPublish: boolean;
   visibility?: 'PUBLIC';
-  /** Optional link article card (requires title; thumbnail via separate image upload). */
+  /** Optional link article card when no image is attached (requires title). */
   articleUrl?: string;
   articleTitle?: string;
   articleDescription?: string;
-  /** urn:li:image:… from upload_image, or pass imageFilePath to upload then attach. */
+  /**
+   * CTA / landing-page URL from the calling agent.
+   * With an image, this is set as LinkedIn contentLandingPage (clickable image).
+   * Without an image, used as the article card source (needs articleTitle) or landing page.
+   */
+  ctaUrl?: string;
+  /** LinkedIn CTA label used with ctaUrl. Default LEARN_MORE. */
+  ctaLabel?:
+    | 'APPLY'
+    | 'DOWNLOAD'
+    | 'VIEW_QUOTE'
+    | 'LEARN_MORE'
+    | 'SIGN_UP'
+    | 'SUBSCRIBE'
+    | 'REGISTER'
+    | 'JOIN'
+    | 'ATTEND'
+    | 'REQUEST_DEMO'
+    | 'SEE_MORE';
+  /** urn:li:image:… from upload_image. Provide only one of imageUrn, imageFilePath, or imageUrl. */
   imageUrn?: string;
   imageFilePath?: string;
+  /** Public HTTPS image URL from the calling agent — preferred over imageFilePath. */
+  imageUrl?: string;
   imageTitle?: string;
 }

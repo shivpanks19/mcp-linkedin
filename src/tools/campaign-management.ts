@@ -673,7 +673,8 @@ export async function handleListCampaigns(client: LinkedInApiClient, args: unkno
 
 export const uploadImageTool: Tool = {
   name: 'upload_image',
-  description: 'Uploads an image file to LinkedIn for use in ads. Supports PNG, JPG, and GIF formats. Returns the image URN that can be used as the mediaId when creating inline ads. The image is uploaded in two steps: initialize upload (get URL + URN), then upload binary.',
+  description:
+    'Uploads an image to LinkedIn for ads or organic posts (PNG, JPG, GIF). The calling agent should pass imageUrl (HTTPS) when the file is hosted; the server downloads it then uploads. filePath is for a local absolute path. Returns the image URN for mediaId / publish_organization_post.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -681,9 +682,14 @@ export const uploadImageTool: Tool = {
         type: 'string',
         description: 'Owner of the image. Can be an organization URN (urn:li:organization:123) or a sponsored account URN (urn:li:sponsoredAccount:123). Use sponsoredAccount if you only have rw_ads permissions.',
       },
+      imageUrl: {
+        type: 'string',
+        description:
+          'Preferred. Public HTTPS URL of the image supplied by the calling agent. Server downloads JPEG/PNG/GIF then uploads to LinkedIn.',
+      },
       filePath: {
         type: 'string',
-        description: 'Absolute path to the image file on the local filesystem',
+        description: 'Absolute path to the image file on the local filesystem. Do not pass both imageUrl and filePath.',
       },
       accountId: {
         type: 'string',
@@ -694,7 +700,7 @@ export const uploadImageTool: Tool = {
         description: 'Optional: Name for the asset in the media library (required if accountId is provided)',
       },
     },
-    required: ['organizationId', 'filePath'],
+    required: ['organizationId'],
   },
 };
 
@@ -702,11 +708,17 @@ export async function handleUploadImage(client: LinkedInApiClient, args: unknown
   const input = args as UploadImageInput;
 
   if (!input.organizationId) throw new Error('organizationId is required');
-  if (!input.filePath) throw new Error('filePath is required');
+  if (!input.filePath && !input.imageUrl) {
+    throw new Error('Provide imageUrl (preferred) or filePath');
+  }
+  if (input.filePath && input.imageUrl) {
+    throw new Error('Provide only one of imageUrl or filePath');
+  }
 
   const result = await client.uploadImage({
     owner: input.organizationId,
     filePath: input.filePath,
+    imageUrl: input.imageUrl,
     accountId: input.accountId,
     assetName: input.assetName,
   });
@@ -714,6 +726,7 @@ export async function handleUploadImage(client: LinkedInApiClient, args: unknown
   return {
     success: true,
     imageUrn: result.imageUrn,
-    message: `Image uploaded successfully. Use imageUrn "${result.imageUrn}" as the mediaId when creating ads.`,
+    source: result.source,
+    message: `Image uploaded successfully. Use imageUrn "${result.imageUrn}" as the mediaId when creating ads or as imageUrn on publish_organization_post.`,
   };
 }

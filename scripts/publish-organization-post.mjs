@@ -4,15 +4,13 @@
  * Usage:
  *   node scripts/publish-organization-post.mjs --org 12345 --text "Hello" --confirm
  *   node scripts/publish-organization-post.mjs --org 12345 --file post.md --image ./card.jpg --confirm
+ *   node scripts/publish-organization-post.mjs --org 12345 --text "Hello" --image-url https://cdn.example.com/card.jpg --cta-url https://example.com --confirm
  */
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { LinkedInApiClient } from '../dist/lib/linkedin-api.js';
 import { TokenStore } from '../dist/auth/token-store.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function parseArgs(argv) {
   const out = { confirm: false };
@@ -23,6 +21,9 @@ function parseArgs(argv) {
     else if (a === '--text') out.text = argv[++i];
     else if (a === '--file') out.file = argv[++i];
     else if (a === '--image') out.image = argv[++i];
+    else if (a === '--image-url') out.imageUrl = argv[++i];
+    else if (a === '--cta-url') out.ctaUrl = argv[++i];
+    else if (a === '--cta-label') out.ctaLabel = argv[++i];
   }
   return out;
 }
@@ -64,9 +65,18 @@ async function main() {
     process.exit(1);
   }
 
+  if (args.image && args.imageUrl) {
+    console.error('Pass only one of --image or --image-url');
+    process.exit(1);
+  }
+
   const client = new LinkedInApiClient(new TokenStore());
   let imageUrn;
-  if (args.image) {
+  if (args.imageUrl) {
+    const uploaded = await client.uploadImage({ owner: org, imageUrl: args.imageUrl });
+    imageUrn = uploaded.imageUrn;
+    console.error('Uploaded image from URL:', imageUrn);
+  } else if (args.image) {
     const imagePath = path.resolve(args.image);
     const uploaded = await client.uploadImage({ owner: org, filePath: imagePath });
     imageUrn = uploaded.imageUrn;
@@ -77,9 +87,17 @@ async function main() {
     organizationId: org,
     commentary,
     imageUrn,
+    contentLandingPage: imageUrn ? args.ctaUrl : undefined,
+    contentCallToActionLabel: imageUrn && args.ctaUrl ? (args.ctaLabel || 'LEARN_MORE') : undefined,
   });
 
-  console.log(JSON.stringify({ success: true, postId: result.postId, organizationId: org }, null, 2));
+  console.log(JSON.stringify({
+    success: true,
+    postId: result.postId,
+    organizationId: org,
+    imageUrn: imageUrn || undefined,
+    ctaUrl: args.ctaUrl || undefined,
+  }, null, 2));
 }
 
 main().catch(err => {

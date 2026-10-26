@@ -7,9 +7,27 @@ This fork adds **Posts API** tools on top of the upstream LinkedIn Ads MCP.
 | Tool | Purpose |
 |------|---------|
 | `list_managed_organizations` | Company pages you can post to (ACL + name) |
-| `publish_organization_post` | Live organic post to page **MAIN_FEED** (text, optional link card or image) |
+| `publish_organization_post` | Live organic post to page **MAIN_FEED** (text + optional image from URL + CTA link) |
 
-`upload_image` also works for organic images when `organizationId` is the page owner.
+`upload_image` also works for organic images when `organizationId` is the page owner. Prefer `imageUrl` over a local `filePath`.
+
+## What the calling agent must pass
+
+Whenever an LLM agent publishes, it should send:
+
+| Field | Role |
+|------|------|
+| `commentary` | Full post text (hook, body, CTA copy). Links in this text are posted as-is. |
+| `imageUrl` | Public HTTPS URL of the image. The server downloads JPEG/PNG/GIF, uploads to LinkedIn, and attaches it. |
+| `ctaUrl` | Destination URL for the CTA. With an image this becomes LinkedIn `contentLandingPage` (clickable image). |
+| `ctaLabel` | Optional. Default `LEARN_MORE`. |
+| `confirmPublish` | Must be `true` to go live. |
+
+Do **not** pass more than one of `imageUrl`, `imageFilePath`, or `imageUrn`.
+
+`file://` image URLs are treated as local paths. `imageFilePath` remains for files already on disk.
+
+Image + CTA takes precedence over an article card. LinkedIn allows one content type; the CTA URL is attached as `contentLandingPage`, not a second card.
 
 ## LinkedIn app requirements
 
@@ -31,8 +49,23 @@ The authenticated member must have **ADMINISTRATOR**, **CONTENT_ADMIN**, **DIREC
 ## Example (Claude / Cursor)
 
 1. `list_managed_organizations` → pick `organizationId` for Swayam AI Labs.
-2. `publish_organization_post` with `commentary`, `confirmPublish: true`, optional `imageFilePath` or `articleUrl` + `articleTitle`.
+2. `publish_organization_post` with:
+   - `commentary` — the post body
+   - `imageUrl` — HTTPS URL of the generated/hosted image
+   - `ctaUrl` — landing page / CTA link
+   - `confirmPublish: true`
+
+CLI equivalent:
+
+```bash
+node scripts/publish-organization-post.mjs \
+  --org 145373966 \
+  --text "Post body…" \
+  --image-url "https://cdn.example.com/linkedin-card.jpg" \
+  --cta-url "https://swayamapp.com" \
+  --confirm
+```
 
 ## Cursor
 
-Add the server to `~/.cursor/mcp.json` (same `node` path as Claude Code) and restart Cursor MCP.
+Add the server to `~/.cursor/mcp.json` (same `node` path as Claude Code) and restart Cursor MCP so it reloads `dist/index.js` after `npm run build`.

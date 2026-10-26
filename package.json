@@ -1,6 +1,6 @@
 {
   "name": "linkedin-ads-mcp",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "MCP server for LinkedIn Ads - stdio locally, streamable HTTP on Render",
   "main": "dist/http.js",
   "type": "module",
@@ -14,7 +14,7 @@
     "dev:http": "tsc && node dist/http.js",
     "auth": "node dist/auth-cli.js",
     "print-tokens": "node scripts/print-tokens-json.mjs",
-    "test": "tsc && node --test dist/url-token-auth.test.js",
+    "test": "tsc && node --test dist/url-token-auth.test.js dist/lib/image-from-url.test.js",
     "dashboard": "tsc && node dist/scripts/generate-dashboard.js && open dashboard.html"
   },
   "keywords": [

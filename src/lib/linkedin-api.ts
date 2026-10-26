@@ -1,4 +1,5 @@
 import { TokenStore } from '../auth/token-store.js';
+import { fetchImageFromUrl } from './image-from-url.js';
 import {
   LinkedInApiResponse,
   LinkedInApiError,
@@ -573,6 +574,8 @@ export class LinkedInApiClient {
     article?: { source: string; title: string; description?: string; thumbnail?: string };
     imageUrn?: string;
     imageTitle?: string;
+    contentLandingPage?: string;
+    contentCallToActionLabel?: string;
   }): Promise<{ postId: string }> {
     const author = this.toOrganizationUrn(data.organizationId);
 
@@ -589,7 +592,16 @@ export class LinkedInApiClient {
       isReshareDisabledByAuthor: false,
     };
 
-    if (data.article) {
+    // Image + CTA landing page takes precedence over an article card.
+    // LinkedIn Posts API allows one content type; CTA URL is contentLandingPage.
+    if (data.imageUrn) {
+      body.content = {
+        media: {
+          id: data.imageUrn,
+          ...(data.imageTitle ? { title: data.imageTitle } : {}),
+        },
+      };
+    } else if (data.article) {
       body.content = {
         article: {
           source: data.article.source,
@@ -598,13 +610,13 @@ export class LinkedInApiClient {
           ...(data.article.thumbnail ? { thumbnail: data.article.thumbnail } : {}),
         },
       };
-    } else if (data.imageUrn) {
-      body.content = {
-        media: {
-          id: data.imageUrn,
-          ...(data.imageTitle ? { title: data.imageTitle } : {}),
-        },
-      };
+    }
+
+    if (data.contentLandingPage) {
+      body.contentLandingPage = data.contentLandingPage;
+    }
+    if (data.contentCallToActionLabel) {
+      body.contentCallToActionLabel = data.contentCallToActionLabel;
     }
 
     const result = await this.request<{ id: string }>('/rest/posts', {
@@ -1237,15 +1249,24 @@ export class LinkedInApiClient {
   }
 
   /**
-   * Uploads an image to LinkedIn for use in ads.
+   * Uploads an image to LinkedIn for ads or organic posts.
    * Two-step process: 1) Initialize upload to get URL + URN, 2) PUT binary to upload URL.
+   * Provide exactly one of filePath, imageUrl, or imageBuffer.
    */
   async uploadImage(data: {
     owner: string;
-    filePath: string;
+    filePath?: string;
+    imageUrl?: string;
+    imageBuffer?: Buffer;
+    contentType?: string;
     accountId?: string;
     assetName?: string;
-  }): Promise<{ imageUrn: string; uploadUrl: string }> {
+  }): Promise<{ imageUrn: string; uploadUrl: string; source: 'file' | 'url' | 'buffer' }> {
+    const sourceCount = [data.filePath, data.imageUrl, data.imageBuffer].filter(Boolean).length;
+    if (sourceCount !== 1) {
+      throw new Error('Provide exactly one of filePath, imageUrl, or imageBuffer');
+    }
+
     // Support both organization and sponsoredAccount as owner
     let ownerUrn: string;
     if (data.owner.startsWith('urn:')) {
@@ -1253,6 +1274,38 @@ export class LinkedInApiClient {
     } else {
       // Default to organization URN, but callers can pass sponsoredAccount URN directly
       ownerUrn = `urn:li:organization:${data.owner}`;
+    }
+
+    let fileBuffer: Buffer;
+    let contentType: string;
+    let source: 'file' | 'url' | 'buffer';
+
+    if (data.imageBuffer) {
+      fileBuffer = data.imageBuffer;
+      contentType = data.contentType || 'application/octet-stream';
+      source = 'buffer';
+    } else if (data.imageUrl) {
+      const fetched = await fetchImageFromUrl(data.imageUrl);
+      fileBuffer = fetched.buffer;
+      contentType = fetched.contentType;
+      source = 'url';
+    } else {
+      const fs = await import('fs');
+      const path = await import('path');
+      const filePath = data.filePath!;
+      if (!fs.existsSync(filePath)) {
+        throw new Error(`File not found: ${filePath}`);
+      }
+      fileBuffer = fs.readFileSync(filePath);
+      const ext = path.extname(filePath).toLowerCase();
+      const mimeTypes: Record<string, string> = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+      };
+      contentType = mimeTypes[ext] || 'application/octet-stream';
+      source = 'file';
     }
 
     // Step 1: Initialize upload
@@ -1283,24 +1336,6 @@ export class LinkedInApiClient {
 
     const { uploadUrl, image: imageUrn } = initResponse.value;
 
-    // Step 2: Upload the binary file
-    const fs = await import('fs');
-    const path = await import('path');
-
-    if (!fs.existsSync(data.filePath)) {
-      throw new Error(`File not found: ${data.filePath}`);
-    }
-
-    const fileBuffer = fs.readFileSync(data.filePath);
-    const ext = path.extname(data.filePath).toLowerCase();
-    const mimeTypes: Record<string, string> = {
-      '.png': 'image/png',
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.gif': 'image/gif',
-    };
-    const contentType = mimeTypes[ext] || 'application/octet-stream';
-
     const accessToken = await this.tokenStore.getAccessToken();
     const uploadResponse = await fetch(uploadUrl, {
       method: 'PUT',
@@ -1316,7 +1351,7 @@ export class LinkedInApiClient {
       throw new Error(`Image upload failed (${uploadResponse.status}): ${errorText}`);
     }
 
-    return { imageUrn, uploadUrl };
+    return { imageUrn, uploadUrl, source };
   }
 
   /**
