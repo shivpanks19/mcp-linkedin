@@ -12,6 +12,7 @@ import {
   DeleteCampaignGroupInput,
   ListCampaignsInput,
   UploadImageInput,
+  UploadVideoInput,
 } from '../lib/types.js';
 
 // ==================== Campaign Group Tools ====================
@@ -728,5 +729,70 @@ export async function handleUploadImage(client: LinkedInApiClient, args: unknown
     imageUrn: result.imageUrn,
     source: result.source,
     message: `Image uploaded successfully. Use imageUrn "${result.imageUrn}" as the mediaId when creating ads or as imageUrn on publish_organization_post.`,
+  };
+}
+
+export const uploadVideoTool: Tool = {
+  name: 'upload_video',
+  description:
+    'Uploads an MP4 video to LinkedIn for organic company posts or ads (3s–30min, max 500MB). Pass videoUrl (HTTPS) when hosted; filePath for local .mp4. Multipart upload + processing wait. Returns videoUrn for publish_organization_post or create_inline_ad mediaId.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      organizationId: {
+        type: 'string',
+        description: 'Owner organization URN or numeric org id.',
+      },
+      videoUrl: {
+        type: 'string',
+        description: 'Preferred. Public HTTPS URL of an MP4 file.',
+      },
+      filePath: {
+        type: 'string',
+        description: 'Absolute path to a local .mp4 file.',
+      },
+      accountId: {
+        type: 'string',
+        description: 'Optional ad account id to register in media library.',
+      },
+      assetName: {
+        type: 'string',
+        description: 'Media library asset name when accountId is set.',
+      },
+      waitForProcessing: {
+        type: 'boolean',
+        description: 'Wait until LinkedIn marks video AVAILABLE (default true).',
+      },
+    },
+    required: ['organizationId'],
+  },
+};
+
+export async function handleUploadVideo(client: LinkedInApiClient, args: unknown): Promise<unknown> {
+  const input = args as UploadVideoInput;
+
+  if (!input.organizationId) throw new Error('organizationId is required');
+  if (!input.filePath && !input.videoUrl) {
+    throw new Error('Provide videoUrl (preferred) or filePath');
+  }
+  if (input.filePath && input.videoUrl) {
+    throw new Error('Provide only one of videoUrl or filePath');
+  }
+
+  const result = await client.uploadVideo({
+    owner: input.organizationId,
+    filePath: input.filePath,
+    videoUrl: input.videoUrl,
+    accountId: input.accountId,
+    assetName: input.assetName,
+    waitForProcessing: input.waitForProcessing,
+  });
+
+  return {
+    success: true,
+    videoUrn: result.videoUrn,
+    status: result.status,
+    source: result.source,
+    message: `Video uploaded (${result.status}). Use videoUrn "${result.videoUrn}" on publish_organization_post.`,
   };
 }

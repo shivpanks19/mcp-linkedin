@@ -1,5 +1,6 @@
 import { TokenStore } from '../auth/token-store.js';
 import { fetchImageFromUrl } from './image-from-url.js';
+import { fetchVideoFromUrl } from './video-from-url.js';
 import {
   LinkedInApiResponse,
   LinkedInApiError,
@@ -573,7 +574,9 @@ export class LinkedInApiClient {
     visibility?: 'PUBLIC';
     article?: { source: string; title: string; description?: string; thumbnail?: string };
     imageUrn?: string;
+    videoUrn?: string;
     imageTitle?: string;
+    videoTitle?: string;
     contentLandingPage?: string;
     contentCallToActionLabel?: string;
   }): Promise<{ postId: string }> {
@@ -592,13 +595,15 @@ export class LinkedInApiClient {
       isReshareDisabledByAuthor: false,
     };
 
-    // Image + CTA landing page takes precedence over an article card.
-    // LinkedIn Posts API allows one content type; CTA URL is contentLandingPage.
-    if (data.imageUrn) {
+    const mediaUrn = data.videoUrn || data.imageUrn;
+    const mediaTitle = data.videoTitle || data.imageTitle;
+
+    // Image/video + CTA landing page takes precedence over an article card.
+    if (mediaUrn) {
       body.content = {
         media: {
-          id: data.imageUrn,
-          ...(data.imageTitle ? { title: data.imageTitle } : {}),
+          id: mediaUrn,
+          ...(mediaTitle ? { title: mediaTitle } : {}),
         },
       };
     } else if (data.article) {
@@ -1352,6 +1357,191 @@ export class LinkedInApiClient {
     }
 
     return { imageUrn, uploadUrl, source };
+  }
+
+  async getVideo(videoUrn: string): Promise<{ status?: string; processingFailureReason?: string } | null> {
+    try {
+      const encodedUrn = encodeURIComponent(videoUrn);
+      return await this.request<{ status?: string; processingFailureReason?: string }>(
+        `/rest/videos/${encodedUrn}`
+      );
+    } catch (error) {
+      console.error(`Failed to fetch video ${videoUrn}:`, error);
+      return null;
+    }
+  }
+
+  async ensureVideoAvailable(videoUrn: string): Promise<void> {
+    await this.waitForVideoAvailable(videoUrn);
+  }
+
+  private async waitForVideoAvailable(
+    videoUrn: string,
+    options: { maxAttempts?: number; delayMs?: number } = {}
+  ): Promise<void> {
+    const maxAttempts = options.maxAttempts ?? 120;
+    const delayMs = options.delayMs ?? 3000;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const video = await this.getVideo(videoUrn);
+      const status = video?.status;
+      if (status === 'AVAILABLE') {
+        return;
+      }
+      if (status === 'PROCESSING_FAILED') {
+        throw new Error(
+          `LinkedIn video processing failed: ${video?.processingFailureReason || 'unknown reason'}`
+        );
+      }
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+
+    throw new Error(
+      `Timed out waiting for video ${videoUrn} to become AVAILABLE (still processing after ${Math.round((maxAttempts * delayMs) / 60000)} min)`
+    );
+  }
+
+  /**
+   * Uploads an MP4 to LinkedIn (multipart), finalizes, and waits until status AVAILABLE.
+   */
+  async uploadVideo(data: {
+    owner: string;
+    filePath?: string;
+    videoUrl?: string;
+    videoBuffer?: Buffer;
+    accountId?: string;
+    assetName?: string;
+    waitForProcessing?: boolean;
+  }): Promise<{
+    videoUrn: string;
+    source: 'file' | 'url' | 'buffer';
+    status: string;
+  }> {
+    const sourceCount = [data.filePath, data.videoUrl, data.videoBuffer].filter(Boolean).length;
+    if (sourceCount !== 1) {
+      throw new Error('Provide exactly one of filePath, videoUrl, or videoBuffer');
+    }
+
+    let ownerUrn: string;
+    if (data.owner.startsWith('urn:')) {
+      ownerUrn = data.owner;
+    } else {
+      ownerUrn = `urn:li:organization:${data.owner}`;
+    }
+
+    let fileBuffer: Buffer;
+    let source: 'file' | 'url' | 'buffer';
+
+    if (data.videoBuffer) {
+      fileBuffer = data.videoBuffer;
+      source = 'buffer';
+    } else if (data.videoUrl) {
+      const fetched = await fetchVideoFromUrl(data.videoUrl);
+      fileBuffer = fetched.buffer;
+      source = 'url';
+    } else {
+      const fs = await import('fs');
+      const path = await import('path');
+      const filePath = data.filePath!;
+      if (!fs.existsSync(filePath)) {
+        throw new Error(`File not found: ${filePath}`);
+      }
+      const ext = path.extname(filePath).toLowerCase();
+      if (ext !== '.mp4') {
+        throw new Error('Video file must be .mp4 for LinkedIn organic upload');
+      }
+      fileBuffer = fs.readFileSync(filePath);
+      source = 'file';
+    }
+
+    if (fileBuffer.byteLength > 500 * 1024 * 1024) {
+      throw new Error('Video exceeds LinkedIn 500MB limit');
+    }
+
+    const initBody: Record<string, unknown> = {
+      initializeUploadRequest: {
+        owner: ownerUrn,
+        fileSizeBytes: fileBuffer.byteLength,
+        uploadCaptions: false,
+        uploadThumbnail: false,
+      },
+    };
+
+    if (data.accountId && data.assetName) {
+      (initBody.initializeUploadRequest as Record<string, unknown>).mediaLibraryMetadata = {
+        associatedAccount: `urn:li:sponsoredAccount:${data.accountId}`,
+        assetName: data.assetName,
+      };
+    }
+
+    const initResponse = await this.request<{
+      value: {
+        video: string;
+        uploadToken?: string;
+        uploadInstructions: Array<{
+          uploadUrl: string;
+          firstByte: number;
+          lastByte: number;
+        }>;
+      };
+    }>('/rest/videos?action=initializeUpload', {
+      method: 'POST',
+      body: initBody,
+    });
+
+    const { video: videoUrn, uploadInstructions, uploadToken = '' } = initResponse.value;
+    const accessToken = await this.tokenStore.getAccessToken();
+    if (!accessToken) {
+      throw new Error('Not authenticated');
+    }
+
+    const uploadedPartIds: string[] = [];
+
+    for (const part of uploadInstructions) {
+      const chunk = fileBuffer.subarray(part.firstByte, part.lastByte + 1);
+      const uploadResponse = await fetch(part.uploadUrl, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/octet-stream',
+        },
+        body: chunk,
+      });
+
+      if (!uploadResponse.ok) {
+        const errorText = await uploadResponse.text();
+        throw new Error(`Video part upload failed (${uploadResponse.status}): ${errorText.slice(0, 300)}`);
+      }
+
+      const etag = uploadResponse.headers.get('etag');
+      if (!etag) {
+        throw new Error('Video part upload succeeded but ETag header was missing');
+      }
+      uploadedPartIds.push(etag.replace(/^"|"$/g, ''));
+    }
+
+    await this.request('/rest/videos?action=finalizeUpload', {
+      method: 'POST',
+      body: {
+        finalizeUploadRequest: {
+          video: videoUrn,
+          uploadToken,
+          uploadedPartIds,
+        },
+      },
+    });
+
+    const wait = data.waitForProcessing !== false;
+    if (wait) {
+      await this.waitForVideoAvailable(videoUrn);
+    }
+
+    const finalMeta = await this.getVideo(videoUrn);
+    return {
+      videoUrn,
+      source,
+      status: finalMeta?.status || 'UNKNOWN',
+    };
   }
 
   /**

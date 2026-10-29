@@ -75,6 +75,8 @@ import {
   handleListCampaigns,
   uploadImageTool,
   handleUploadImage,
+  uploadVideoTool,
+  handleUploadVideo,
 } from './tools/campaign-management.js';
 import {
   listManagedOrganizationsTool,
@@ -119,6 +121,7 @@ export const TOOLS: Tool[] = [
   createInlineAdTool,
   listCampaignsTool,
   uploadImageTool,
+  uploadVideoTool,
   // Organic company page posts (Posts API)
   listManagedOrganizationsTool,
   publishOrganizationPostTool,
@@ -276,6 +279,9 @@ export class LinkedInAdsMCPServer {
             break;
           case 'upload_image':
             result = await handleUploadImage(this.apiClient, args);
+            break;
+          case 'upload_video':
+            result = await handleUploadVideo(this.apiClient, args);
             break;
 
           case 'list_managed_organizations':
