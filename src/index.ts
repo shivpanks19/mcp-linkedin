@@ -13,6 +13,7 @@ import {
 
 import { LinkedInApiClient } from './lib/linkedin-api.js';
 import { TokenStore } from './auth/token-store.js';
+import { hostedLinkedInAuthUrl } from './auth/hosted-token-maintenance.js';
 import {
   listAdAccountsTool,
   getAccountDetailsTool,
@@ -169,13 +170,17 @@ export class LinkedInAdsMCPServer {
         // Check if authenticated
         const isAuthenticated = await this.tokenStore.hasValidToken();
         if (!isAuthenticated) {
+          const hostedUrl = process.env.RENDER === 'true' ? hostedLinkedInAuthUrl() : null;
           return {
             content: [
               {
                 type: 'text',
                 text: JSON.stringify({
                   error: 'Not authenticated',
-                  message: 'Please run the authentication flow first: npm run auth',
+                  message: hostedUrl
+                    ? `Connect LinkedIn on the hosted server (one-time): ${hostedUrl}`
+                    : 'Please run the authentication flow first: npm run auth',
+                  linkedin_reauth_url: hostedUrl ?? undefined,
                 }),
               },
             ],

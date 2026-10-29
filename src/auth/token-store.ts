@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { LinkedInTokens } from '../lib/types.js';
+import { scheduleRenderTokenSync } from './render-token-sync.js';
 
 const DEFAULT_TOKEN_PATH = path.join(os.homedir(), '.linkedin-ads-mcp', 'tokens.json');
 
@@ -28,7 +29,48 @@ export class TokenStore {
     }
   }
 
+  private tryReadTokenFile(filePath: string): LinkedInTokens | null {
+    try {
+      if (!fs.existsSync(filePath)) {
+        return null;
+      }
+      const data = fs.readFileSync(filePath, 'utf-8');
+      return JSON.parse(data) as LinkedInTokens;
+    } catch (error) {
+      console.error('Failed to read token file:', error);
+      return null;
+    }
+  }
+
+  /** Access token may be expired if a refresh_token is present. */
+  private isUsableTokenRecord(tokens: LinkedInTokens | null): tokens is LinkedInTokens {
+    if (!tokens?.access_token) {
+      return false;
+    }
+    if (tokens.refresh_token) {
+      return true;
+    }
+    const now = Math.floor(Date.now() / 1000);
+    return tokens.expires_at > now + 300;
+  }
+
+  private seedTokenFile(tokens: LinkedInTokens): void {
+    try {
+      this.ensureDirectory();
+      fs.writeFileSync(this.tokenPath, JSON.stringify(tokens, null, 2), { mode: 0o600 });
+    } catch (error) {
+      console.error('Failed to seed token file from env bootstrap:', error);
+    }
+  }
+
   private loadTokens(): void {
+    const fileTokens = this.tryReadTokenFile(this.tokenPath);
+    if (this.isUsableTokenRecord(fileTokens)) {
+      this.tokens = fileTokens;
+      this.source = 'file';
+      return;
+    }
+
     const envRaw = (process.env.LINKEDIN_TOKENS_JSON || '').trim();
     if (envRaw) {
       try {
@@ -38,6 +80,7 @@ export class TokenStore {
         }
         this.tokens = parsed;
         this.source = 'env';
+        this.seedTokenFile(parsed);
         return;
       } catch (error) {
         throw new Error(
@@ -46,17 +89,8 @@ export class TokenStore {
       }
     }
 
-    try {
-      if (fs.existsSync(this.tokenPath)) {
-        const data = fs.readFileSync(this.tokenPath, 'utf-8');
-        this.tokens = JSON.parse(data);
-        this.source = this.tokens ? 'file' : 'none';
-      }
-    } catch (error) {
-      console.error('Failed to load tokens:', error);
-      this.tokens = null;
-      this.source = 'none';
-    }
+    this.tokens = null;
+    this.source = 'none';
   }
 
   async saveTokens(tokens: LinkedInTokens): Promise<void> {
@@ -73,6 +107,8 @@ export class TokenStore {
       // Render's filesystem may be read-only except /tmp; keep tokens in memory.
       console.error('Failed to persist tokens to disk (in-memory refresh still applies):', error);
     }
+
+    scheduleRenderTokenSync(tokens, 'saveTokens');
   }
 
   async getTokens(): Promise<LinkedInTokens | null> {

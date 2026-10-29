@@ -21,9 +21,9 @@ services:
         sync: false
       - key: LINKEDIN_CLIENT_SECRET
         sync: false
-      - key: LINKEDIN_TOKENS_JSON
-        sync: false
       - key: LINKEDIN_REDIRECT_URI
-        value: http://localhost:3000/callback
+        sync: false
+      - key: RENDER_API_KEY
+        sync: false
       - key: TOKEN_STORAGE_PATH
         value: /tmp/linkedin-ads-mcp-tokens.json
