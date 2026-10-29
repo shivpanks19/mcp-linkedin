@@ -459,6 +459,16 @@ export interface UploadImageInput {
   assetName?: string;
 }
 
+export interface UploadVideoInput {
+  organizationId: string;
+  filePath?: string;
+  videoUrl?: string;
+  accountId?: string;
+  assetName?: string;
+  /** Default true — poll until LinkedIn status is AVAILABLE before returning. */
+  waitForProcessing?: boolean;
+}
+
 export interface ListManagedOrganizationsInput {
   /** Only return orgs where the member has one of these page roles (default: post-capable roles). */
   roles?: Array<
@@ -504,4 +514,9 @@ export interface PublishOrganizationPostInput {
   /** Public HTTPS image URL from the calling agent — preferred over imageFilePath. */
   imageUrl?: string;
   imageTitle?: string;
+  /** urn:li:video:… from upload_video. Provide only one of videoUrn, videoFilePath, or videoUrl. */
+  videoUrn?: string;
+  videoFilePath?: string;
+  videoUrl?: string;
+  videoTitle?: string;
 }

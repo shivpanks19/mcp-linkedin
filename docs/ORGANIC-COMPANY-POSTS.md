@@ -7,9 +7,10 @@ This fork adds **Posts API** tools on top of the upstream LinkedIn Ads MCP.
 | Tool | Purpose |
 |------|---------|
 | `list_managed_organizations` | Company pages you can post to (ACL + name) |
-| `publish_organization_post` | Live organic post to page **MAIN_FEED** (text + optional image from URL + CTA link) |
+| `publish_organization_post` | Live organic post to page **MAIN_FEED** (text + optional image or **native MP4 video** + CTA link) |
+| `upload_video` | Upload MP4 (multipart), wait for processing, returns `urn:li:video:…` |
 
-`upload_image` also works for organic images when `organizationId` is the page owner. Prefer `imageUrl` over a local `filePath`.
+`upload_image` also works for organic images when `organizationId` is the page owner. Prefer `imageUrl` / `videoUrl` over a local `filePath`.
 
 ## What the calling agent must pass
 
@@ -18,12 +19,15 @@ Whenever an LLM agent publishes, it should send:
 | Field | Role |
 |------|------|
 | `commentary` | Full post text (hook, body, CTA copy). Links in this text are posted as-is. |
-| `imageUrl` | Public HTTPS URL of the image. The server downloads JPEG/PNG/GIF, uploads to LinkedIn, and attaches it. |
+| `imageUrl` | Public HTTPS URL of the image (JPEG/PNG/GIF). |
+| `videoUrl` | Public HTTPS URL of an **MP4** (max 500MB). Server uploads and waits for LinkedIn processing. |
 | `ctaUrl` | Destination URL for the CTA. With an image this becomes LinkedIn `contentLandingPage` (clickable image). |
 | `ctaLabel` | Optional. Default `LEARN_MORE`. |
 | `confirmPublish` | Must be `true` to go live. |
 
-Do **not** pass more than one of `imageUrl`, `imageFilePath`, or `imageUrn`.
+Do **not** pass more than one of `imageUrl`, `imageFilePath`, or `imageUrn`. Do **not** combine image and video fields on one post.
+
+Video must be **MP4**, 3 seconds–30 minutes, 75KB–500MB (LinkedIn Videos API).
 
 `file://` image URLs are treated as local paths. `imageFilePath` remains for files already on disk.
 

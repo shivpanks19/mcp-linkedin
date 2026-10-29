@@ -48,7 +48,7 @@ export const listManagedOrganizationsTool: Tool = {
 export const publishOrganizationPostTool: Tool = {
   name: 'publish_organization_post',
   description:
-    'Publishes an organic (free) company-page post to LinkedIn MAIN_FEED. The calling LLM agent must pass the full post commentary (textual content + CTA copy) and, when posting a visual, imageUrl (HTTPS URL of the image). The server downloads that image, uploads it to LinkedIn, and attaches it. Pass ctaUrl for the destination link (clickable image landing page). Not an ad. Requires w_organization_social and a post-capable page role. Set confirmPublish to true to go live.',
+    'Publishes an organic (free) company-page post to LinkedIn MAIN_FEED. Pass commentary and one media type: imageUrl (JPEG/PNG/GIF), videoUrl (MP4), or pre-uploaded URNs. Server downloads and uploads media. ctaUrl optional (contentLandingPage with image). confirmPublish must be true to go live.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -89,10 +89,27 @@ export const publishOrganizationPostTool: Tool = {
         type: 'string',
         description: 'Optional title for image posts.',
       },
+      videoUrl: {
+        type: 'string',
+        description:
+          'Public HTTPS URL of an MP4 (max 500MB). Server uploads via Videos API and waits for processing.',
+      },
+      videoFilePath: {
+        type: 'string',
+        description: 'Absolute path to a local .mp4 file.',
+      },
+      videoUrn: {
+        type: 'string',
+        description: 'Optional urn:li:video:… from a prior upload_video call.',
+      },
+      videoTitle: {
+        type: 'string',
+        description: 'Optional title shown on native video posts.',
+      },
       ctaUrl: {
         type: 'string',
         description:
-          'CTA / landing-page URL from the calling agent. With an image this becomes LinkedIn contentLandingPage (clickable image). Without an image it is used as the article card URL when articleTitle is set.',
+          'CTA / landing-page URL. With image/video may map to contentLandingPage where supported. Without media, used as article card URL when articleTitle is set.',
       },
       ctaLabel: {
         type: 'string',
@@ -102,7 +119,7 @@ export const publishOrganizationPostTool: Tool = {
       articleUrl: {
         type: 'string',
         description:
-          'Optional URL for a link/article card when no image is attached. Ignored as a card if imageUrl/imageFilePath/imageUrn is set (use ctaUrl instead).',
+          'Optional URL for a link/article card when no image or video is attached.',
       },
       articleTitle: {
         type: 'string',
@@ -156,6 +173,28 @@ function resolveImageSource(input: PublishOrganizationPostInput): {
   return { imageUrn, filePath, imageUrl };
 }
 
+function resolveVideoSource(input: PublishOrganizationPostInput): {
+  videoUrn?: string;
+  filePath?: string;
+  videoUrl?: string;
+} {
+  let videoUrl = input.videoUrl?.trim();
+  let filePath = input.videoFilePath?.trim();
+  const videoUrn = input.videoUrn?.trim();
+
+  if (videoUrl?.startsWith('file://')) {
+    filePath = fileURLToPath(videoUrl);
+    videoUrl = undefined;
+  }
+
+  const sources = [videoUrn, filePath, videoUrl].filter(Boolean);
+  if (sources.length > 1) {
+    throw new Error('Provide only one of videoUrn, videoFilePath, or videoUrl');
+  }
+
+  return { videoUrn, filePath, videoUrl };
+}
+
 export async function handlePublishOrganizationPost(
   client: LinkedInApiClient,
   args: unknown
@@ -170,10 +209,18 @@ export async function handlePublishOrganizationPost(
     );
   }
 
-  const { imageUrn: existingImageUrn, filePath, imageUrl } = resolveImageSource(input);
+  const { imageUrn: existingImageUrn, filePath: imagePath, imageUrl } = resolveImageSource(input);
+  const { videoUrn: existingVideoUrn, filePath: videoPath, videoUrl } = resolveVideoSource(input);
+
+  const hasImageInput = Boolean(existingImageUrn || imagePath || imageUrl);
+  const hasVideoInput = Boolean(existingVideoUrn || videoPath || videoUrl);
+  if (hasImageInput && hasVideoInput) {
+    throw new Error('Provide either image fields or video fields, not both');
+  }
+
   const landingPageUrl = (input.ctaUrl || input.articleUrl || '').trim() || undefined;
-  const hasImageInput = Boolean(existingImageUrn || filePath || imageUrl);
-  const articleSource = !hasImageInput ? landingPageUrl : undefined;
+  const hasMediaInput = hasImageInput || hasVideoInput;
+  const articleSource = !hasMediaInput ? landingPageUrl : undefined;
 
   if (articleSource && !input.articleTitle) {
     throw new Error('articleTitle is required when posting a link card without an image');
@@ -184,10 +231,10 @@ export async function handlePublishOrganizationPost(
     ? 'urn'
     : undefined;
 
-  if (filePath) {
+  if (imagePath) {
     const uploaded = await client.uploadImage({
       owner: input.organizationId,
-      filePath,
+      filePath: imagePath,
     });
     imageUrn = uploaded.imageUrn;
     imageSource = uploaded.source;
@@ -200,12 +247,40 @@ export async function handlePublishOrganizationPost(
     imageSource = uploaded.source;
   }
 
+  let videoUrn = existingVideoUrn;
+  let videoSource: 'urn' | 'file' | 'url' | 'buffer' | undefined = existingVideoUrn ? 'urn' : undefined;
+  let videoStatus: string | undefined;
+
+  if (videoPath) {
+    const uploaded = await client.uploadVideo({
+      owner: input.organizationId,
+      filePath: videoPath,
+    });
+    videoUrn = uploaded.videoUrn;
+    videoSource = uploaded.source;
+    videoStatus = uploaded.status;
+  } else if (videoUrl) {
+    const uploaded = await client.uploadVideo({
+      owner: input.organizationId,
+      videoUrl,
+    });
+    videoUrn = uploaded.videoUrn;
+    videoSource = uploaded.source;
+    videoStatus = uploaded.status;
+  } else if (videoUrn) {
+    videoStatus = (await client.getVideo(videoUrn))?.status;
+    if (videoStatus !== 'AVAILABLE') {
+      await client.ensureVideoAvailable(videoUrn);
+      videoStatus = 'AVAILABLE';
+    }
+  }
+
   const result = await client.createOrganicOrganizationPost({
     organizationId: input.organizationId,
     commentary: input.commentary,
     visibility: input.visibility ?? 'PUBLIC',
     article:
-      !imageUrn && articleSource && input.articleTitle
+      !imageUrn && !videoUrn && articleSource && input.articleTitle
         ? {
             source: articleSource,
             title: input.articleTitle,
@@ -213,8 +288,10 @@ export async function handlePublishOrganizationPost(
           }
         : undefined,
     imageUrn,
+    videoUrn,
     imageTitle: input.imageTitle || (imageUrn ? input.articleTitle : undefined),
-    contentLandingPage: imageUrn ? landingPageUrl : undefined,
+    videoTitle: input.videoTitle,
+    contentLandingPage: imageUrn && landingPageUrl ? landingPageUrl : undefined,
     contentCallToActionLabel:
       imageUrn && landingPageUrl ? input.ctaLabel || 'LEARN_MORE' : undefined,
   });
@@ -225,6 +302,9 @@ export async function handlePublishOrganizationPost(
     message: 'Organic company page post published to MAIN_FEED.',
     imageUrn: imageUrn ?? undefined,
     imageSource,
+    videoUrn: videoUrn ?? undefined,
+    videoSource,
+    videoStatus,
     ctaUrl: landingPageUrl,
   };
 }
