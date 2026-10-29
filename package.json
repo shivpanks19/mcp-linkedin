@@ -14,6 +14,7 @@
     "dev:http": "tsc && node dist/http.js",
     "auth": "node dist/auth-cli.js",
     "print-tokens": "node scripts/print-tokens-json.mjs",
+    "sync-tokens-to-render": "npm run build && node scripts/sync-tokens-to-render.mjs",
     "test": "tsc && node --test dist/url-token-auth.test.js dist/lib/image-from-url.test.js",
     "dashboard": "tsc && node dist/scripts/generate-dashboard.js && open dashboard.html"
   },

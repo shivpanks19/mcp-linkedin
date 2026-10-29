@@ -1,105 +1,61 @@
 # Deploy on Render
 
-Host the LinkedIn Ads MCP server as a **Web Service** with **streamable HTTP** so Cursor (or other MCP clients) can connect remotely — the same pattern as `mcp-google-ads`.
+Host the LinkedIn Ads MCP server as a **Web Service** with **streamable HTTP** so Cursor can connect remotely.
 
-Local stdio (`npm start`) is unchanged. This doc is only for the HTTP process (`npm run start:http`).
+**Tokens are managed on Render only** — the server refreshes LinkedIn access tokens itself and persists them back to Render env. You do **not** copy `tokens.json` from your laptop.
+
+Local stdio (`npm run start:stdio`) is for laptop-only use.
 
 ## Prerequisites
 
-1. [Render](https://render.com) account (use **Starter**, not free spin-down)
-2. This repo on GitHub (Hexa fork — do **not** push secrets or token JSON)
-3. LinkedIn Developer App with **Advertising API** (and Community Management if you use organic post tools)
-4. A one-time local OAuth so you can paste tokens into Render:
-   - `npm run auth` on your laptop
-   - `npm run print-tokens` → one-line JSON for `LINKEDIN_TOKENS_JSON`
+1. [Render](https://render.com) account (**Starter**, not free spin-down)
+2. This repo on GitHub
+3. LinkedIn Developer App with **Advertising API** + Community Management (organic posts)
+4. On the LinkedIn app, add redirect URL:  
+   `https://YOUR-SERVICE.onrender.com/auth/linkedin/callback`
 
-LinkedIn has no service-account flow. Tokens live in env, not on disk.
+## Environment variables (Render dashboard)
 
-## Option A — Render Dashboard
+| Variable | Required | Notes |
+|----------|----------|--------|
+| `NODE_VERSION` | yes | `20` |
+| `MCP_URL_AUTH_TOKEN` | yes | Secret — protects `/mcp` and `/auth/linkedin` |
+| `LINKEDIN_CLIENT_ID` | yes | Same app as redirect URI |
+| `LINKEDIN_CLIENT_SECRET` | yes | Secret |
+| `LINKEDIN_REDIRECT_URI` | yes | `https://YOUR-SERVICE.onrender.com/auth/linkedin/callback` |
+| `TOKEN_STORAGE_PATH` | yes | `/tmp/linkedin-ads-mcp-tokens.json` |
+| `RENDER_API_KEY` | yes | Render API key with permission to update **this** service’s env vars |
+| `LINKEDIN_TOKENS_JSON` | no | Filled automatically after hosted OAuth + after each refresh |
 
-### 1. Create Web Service
+Render injects `RENDER=true`, `RENDER_SERVICE_ID`, and `RENDER_EXTERNAL_URL` — you do not set those.
 
-1. [Render Dashboard](https://dashboard.render.com) → **New +** → **Web Service**
-2. Connect GitHub → this repo
-3. Settings:
+### How tokens work on Render (no laptop)
+
+1. **First connect:** open  
+   `https://YOUR-SERVICE.onrender.com/auth/linkedin?token=YOUR_MCP_URL_AUTH_TOKEN`  
+   Sign in with LinkedIn. Tokens are saved to `/tmp` and written to `LINKEDIN_TOKENS_JSON` via Render API.
+2. **Routine refresh:** before access tokens expire, the server calls LinkedIn’s refresh endpoint (same as local MCP), updates `/tmp`, and pushes the new JSON to `LINKEDIN_TOKENS_JSON` on Render (no redeploy).
+3. **If refresh fails** (revoked session): `/health` returns `linkedin_reauth_url` — open that link again. No local `npm run auth` required.
+
+A background job runs every 30 minutes on Render to refresh early and log the re-auth URL if needed.
+
+## Create Web Service
 
 | Field | Value |
 |-------|--------|
-| **Name** | `mcp-linkedin` |
-| **Region** | Oregon (or nearest) |
-| **Branch** | `main` |
-| **Runtime** | Node |
-| **Node version** | `20` (set env `NODE_VERSION=20` or use `.node-version`) |
 | **Build Command** | `npm install && npm run build` |
 | **Start Command** | `node dist/http.js` |
 | **Health Check Path** | `/health` |
 
-Do **not** use a static site or the default `node index.js` (that is stdio).
-
-### 2. Environment variables
-
-| Variable | Required | Value |
-|----------|----------|--------|
-| `NODE_VERSION` | yes | `20` |
-| `MCP_URL_AUTH_TOKEN` | yes | Long random secret. Required on `/mcp` |
-| `LINKEDIN_CLIENT_ID` | yes | LinkedIn app client ID (token refresh) |
-| `LINKEDIN_CLIENT_SECRET` | yes | LinkedIn app client secret |
-| `LINKEDIN_TOKENS_JSON` | yes | Entire `tokens.json` on **one line** |
-| `LINKEDIN_REDIRECT_URI` | no | Only needed for local `npm run auth` |
-
-**`LINKEDIN_TOKENS_JSON`:** run locally, then paste the stdout as a Render **Secret**:
-
-```bash
-npm run print-tokens
-```
-
-Mark client secret, tokens JSON, and MCP URL token as **Secret**.
-
-### 3. Deploy
-
-Click **Create Web Service**. First deploy takes a few minutes.
-
-### 4. Verify
+## Verify
 
 ```bash
 curl https://YOUR-SERVICE.onrender.com/health
-# {"status":"ok","service":"linkedin-ads-mcp","linkedin_authenticated":true,...}
-
-curl https://YOUR-SERVICE.onrender.com/
-# JSON with mcp_endpoint: /mcp
 ```
 
-MCP URL for Cursor:
+After OAuth: `"linkedin_authenticated": true`. Before OAuth: `"linkedin_authenticated": false` and `"linkedin_reauth_url": "https://…/auth/linkedin?token=…"`.
 
-```text
-https://YOUR-SERVICE.onrender.com/mcp?token=YOUR_MCP_URL_AUTH_TOKEN
-```
-
-If the client strips query strings, use the path-token form:
-
-```text
-https://YOUR-SERVICE.onrender.com/YOUR_MCP_URL_AUTH_TOKEN/mcp
-```
-
-## Option B — Blueprint (`render.yaml`)
-
-1. **New +** → **Blueprint**
-2. Connect repo (includes `render.yaml` at repo root)
-3. Fill secret env vars in the dashboard after create
-
-## Cursor remote MCP config
-
-```json
-{
-  "mcpServers": {
-    "linkedin-ads": {
-      "url": "https://YOUR-SERVICE.onrender.com/mcp?token=YOUR_MCP_URL_AUTH_TOKEN"
-    }
-  }
-}
-```
-
-Header form (token stays out of the URL / logs):
+## Cursor config
 
 ```json
 {
@@ -114,37 +70,23 @@ Header form (token stays out of the URL / logs):
 }
 ```
 
-Keep the existing local stdio server if you still want laptop-only access. Do not register both against the same Cursor workspace unless you rename one.
+## Security
 
-## Security notes
-
-- Set `MCP_URL_AUTH_TOKEN` as a Render **Secret**. `/mcp` rejects requests without it; `/` and `/health` stay public.
-- Never commit `.env` or `tokens.json`.
-- This URL can list ad accounts and publish org posts. Treat it like Google Ads MCP: only people who should operate Hexa LinkedIn ads get the token.
-- Access tokens refresh in memory using `refresh_token` from `LINKEDIN_TOKENS_JSON`. After a restart Render reloads the original JSON; refresh still works as long as the refresh token is valid (~1 year). Re-run `npm run auth` locally and update the env var when LinkedIn invalidates it.
+- Never commit `.env` or token JSON.
+- `RENDER_API_KEY` on the service only updates env vars for that service (used for self-persist after refresh).
+- Treat the MCP URL like production ads access.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---------|-----|
-| Health `linkedin_authenticated: false` | Paste a current `npm run print-tokens` into `LINKEDIN_TOKENS_JSON`; set client id/secret |
-| 401 on `/mcp` | Token missing/wrong. Use `?token=` or `/<token>/mcp` or `Authorization: Bearer` |
-| Health check fails | Start command must be `npm run start:http`, health path `/health` |
-| Process dies on stdio | You started `npm start` / `node dist/index.js` instead of `start:http` |
-| Token expired after months | Local `npm run auth`, then update `LINKEDIN_TOKENS_JSON` |
-| Free tier sleeps | First request ~30s; use Starter for always-on (same as Google Ads MCP) |
+| `upload_image` 401 / token revoked | Open `linkedin_reauth_url` from `/health` (hosted OAuth again) |
+| `linkedin_authenticated: false` | Same — one-time browser connect on Render |
+| Render self token persist failed | Check `RENDER_API_KEY` scope; logs show Render API errors |
+| 401 on `/mcp` | Wrong `MCP_URL_AUTH_TOKEN` on client |
 
-## Local parity (before deploying)
+## Local laptop (optional)
 
-```bash
-cd "/Users/shivpanks/Marketing project/linkedin-mcp"
-export PORT=8000
-export MCP_URL_AUTH_TOKEN=dev-secret
-export LINKEDIN_CLIENT_ID=...
-export LINKEDIN_CLIENT_SECRET=...
-export LINKEDIN_TOKENS_JSON="$(npm run --silent print-tokens)"
-npm run build
-npm run start:http
-# curl http://127.0.0.1:8000/health
-# curl -H 'Authorization: Bearer dev-secret' http://127.0.0.1:8000/
-```
+`npm run auth` only updates `~/.linkedin-ads-mcp/tokens.json` for **local** stdio MCP. It does not push to Render. Use hosted OAuth for the remote server.
+
+Emergency manual env update (rare): `npm run sync-tokens-to-render` with `RENDER_API_KEY` + `RENDER_SERVICE_ID` in **local** `.env` only.

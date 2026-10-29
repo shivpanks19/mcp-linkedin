@@ -11,12 +11,14 @@ const LINKEDIN_TOKEN_URL = 'https://www.linkedin.com/oauth/v2/accessToken';
 // - rw_ads / r_ads_reporting: ads CRUD and reporting
 // - r_organization_social / w_organization_social: read/write organic org posts & images
 // - r_organization_admin: list organizations the member can administer (organizationAcls)
+// - rw_organization_admin: read and update the company page (about, specialties, website, industry)
 const SCOPES = [
   'rw_ads',
   'r_ads_reporting',
   'r_organization_social',
   'w_organization_social',
   'r_organization_admin',
+  'rw_organization_admin',
 ];
 
 interface OAuthConfig {
@@ -128,30 +130,34 @@ export class LinkedInOAuth {
         }
       });
 
-      // Build authorization URL
-      const authUrl = new URL(LINKEDIN_AUTH_URL);
-      authUrl.searchParams.set('response_type', 'code');
-      authUrl.searchParams.set('client_id', this.config.clientId);
-      authUrl.searchParams.set('redirect_uri', this.config.redirectUri);
-      authUrl.searchParams.set('state', state);
-      authUrl.searchParams.set('scope', SCOPES.join(' '));
+      const authUrl = this.getAuthorizationUrl(state);
 
       console.log('\nOpening browser for LinkedIn authentication...');
       console.log('If the browser does not open, visit this URL:');
-      console.log(authUrl.toString());
+      console.log(authUrl);
       console.log();
 
       // Open the browser
-      open(authUrl.toString()).catch(() => {
+      open(authUrl).catch(() => {
         console.log('Failed to open browser automatically. Please open the URL above manually.');
       });
     });
   }
 
+  getAuthorizationUrl(state: string): string {
+    const authUrl = new URL(LINKEDIN_AUTH_URL);
+    authUrl.searchParams.set('response_type', 'code');
+    authUrl.searchParams.set('client_id', this.config.clientId);
+    authUrl.searchParams.set('redirect_uri', this.config.redirectUri);
+    authUrl.searchParams.set('state', state);
+    authUrl.searchParams.set('scope', SCOPES.join(' '));
+    return authUrl.toString();
+  }
+
   /**
    * Exchanges an authorization code for access and refresh tokens.
    */
-  private async exchangeCodeForTokens(code: string): Promise<LinkedInTokens> {
+  async exchangeCodeForTokens(code: string): Promise<LinkedInTokens> {
     const response = await fetch(LINKEDIN_TOKEN_URL, {
       method: 'POST',
       headers: {

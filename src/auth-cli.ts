@@ -21,8 +21,9 @@ async function main() {
   const tokenStore = new TokenStore();
 
   // Check if already authenticated
+  const force = process.argv.includes('--force');
   const hasToken = await tokenStore.hasValidToken();
-  if (hasToken) {
+  if (hasToken && !force) {
     const expInfo = tokenStore.getTokenExpirationInfo();
     if (expInfo && !expInfo.isExpired) {
       console.log('You are already authenticated!');
@@ -46,6 +47,7 @@ async function main() {
       console.log('Refresh token obtained - tokens will auto-refresh');
     }
     console.log('\nYou can now use the LinkedIn Ads MCP server.');
+    console.log('Hosted MCP: connect on Render via /auth/linkedin — no need to copy tokens from this laptop.');
   } catch (error) {
     console.error('\nAuthentication failed:', error instanceof Error ? error.message : error);
     process.exit(1);

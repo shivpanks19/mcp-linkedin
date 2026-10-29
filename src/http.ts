@@ -22,6 +22,12 @@ import {
   pathTokenRewrite,
   urlTokenAuth,
 } from './url-token-auth.js';
+import { TokenStore } from './auth/token-store.js';
+import { mountLinkedInOAuthRoutes } from './auth/http-oauth-routes.js';
+import {
+  hostedLinkedInAuthUrl,
+  startHostedTokenMaintenance,
+} from './auth/hosted-token-maintenance.js';
 
 type ActiveTransport = StreamableHTTPServerTransport;
 
@@ -127,17 +133,21 @@ function buildApp() {
   app.disable('x-powered-by');
   app.use(pathTokenRewrite);
   app.use(express.json({ limit: '4mb' }));
+
+  const tokenStore = new TokenStore();
+  mountLinkedInOAuthRoutes(app, tokenStore);
+
   app.use(urlTokenAuth);
 
   app.get('/health', async (_req, res) => {
-    const mcp = new LinkedInAdsMCPServer();
-    const store = mcp.getTokenStore();
     let authenticated = false;
     try {
-      authenticated = await store.hasValidToken();
+      authenticated = await tokenStore.hasValidToken();
     } catch (error) {
       console.error('Health token check failed', error);
     }
+
+    const reauthUrl = authenticated ? undefined : hostedLinkedInAuthUrl();
 
     res.json({
       status: 'ok',
@@ -145,8 +155,9 @@ function buildApp() {
       version: SERVER_VERSION,
       transport: 'streamable-http',
       auth_type: configuredToken() ? 'url_token' : 'none',
-      linkedin_token_source: store.getTokenSource(),
+      linkedin_token_source: tokenStore.getTokenSource(),
       linkedin_authenticated: authenticated,
+      linkedin_reauth_url: reauthUrl ?? undefined,
       mcp_tool_count: TOOLS.length,
       active_sessions: Object.keys(transports).length,
       git_commit:
@@ -169,6 +180,7 @@ function buildApp() {
         url_formats: authEnabled ? ['/mcp?token=...', '/<token>/mcp'] : [],
       },
       health: '/health',
+      linkedin_auth: '/auth/linkedin?token=… (requires MCP_URL_AUTH_TOKEN when set)',
       docs: 'docs/render-deploy.md',
     });
   });
@@ -176,6 +188,8 @@ function buildApp() {
   app.post('/mcp', handleMcpPost);
   app.get('/mcp', handleMcpSession);
   app.delete('/mcp', handleMcpSession);
+
+  startHostedTokenMaintenance(tokenStore);
 
   return app;
 }
@@ -191,11 +205,14 @@ export async function startHttpServer(): Promise<void> {
     );
   }
 
-  const store = new LinkedInAdsMCPServer().getTokenStore();
+  const store = new TokenStore();
   const authenticated = await store.hasValidToken();
   if (!authenticated) {
+    const url = hostedLinkedInAuthUrl();
     console.error(
-      'Warning: no valid LinkedIn token. Set LINKEDIN_TOKENS_JSON (Render) or run npm run auth locally.'
+      url
+        ? `LinkedIn not connected. Open once in browser: ${url}`
+        : 'Warning: no valid LinkedIn token. On Render, set LINKEDIN_REDIRECT_URI and open /auth/linkedin'
     );
   }
 
